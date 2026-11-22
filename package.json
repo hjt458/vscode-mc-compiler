@@ -2,7 +2,7 @@
   "name": "mc-compiler",
   "displayName": "MC Compiler (ProgrammableFurnace)",
   "description": "语法高亮、保存即编译，并把 .mc 脚本的编译诊断标到编辑器里。复用可编程熔炉自带的编译器前端。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hjt458",
   "license": "MIT",
   "engines": {
