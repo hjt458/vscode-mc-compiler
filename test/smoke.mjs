@@ -58,4 +58,35 @@ assert.equal(noisy[0].state, 'BLANK', 'noise skipped');
 step('compileFiles: empty');
 assert.deepEqual(await compiler.compileFiles([], { sourceRoot, storageDir }), [], 'empty input');
 
+// 8. Lexical symbols: module + functions, with positions that survive masking.
+step('symbols: collect');
+const symbols = require('../src/symbols.js');
+const fs = await import('node:fs/promises');
+const sampleText = await fs.readFile(SAMPLE, 'utf8');
+const found = symbols.collectSymbols(sampleText);
+const names = found.map((s) => s.name);
+assert.deepEqual(
+  names,
+  ['冶炼', 'refillFuel', 'refillInput', 'sortInput', 'hasInput', 'smelt', 'returnItem', 'RunLoop'],
+  `symbols in document order, got ${names.join(', ')}`,
+);
+assert.equal(found[0].kind, 'module', 'first symbol is the module');
+assert.equal(found.at(-1).kind, 'entry', 'RunLoop is the entry point');
+
+const masked = symbols.mask('MODULE("x") // c\nint a = "b // not a comment";\n');
+assert.equal(masked.length, 'MODULE("x") // c\nint a = "b // not a comment";\n'.length, 'mask keeps offsets');
+assert.ok(!masked.includes('not a comment'), 'string/comment content is blanked');
+assert.ok(masked.includes('int a ='), 'code is kept');
+
+step('symbols: wordAt');
+assert.deepEqual(symbols.wordAt('  refillFuel();', 4), { word: 'refillFuel', start: 2, end: 11 });
+assert.equal(symbols.wordAt('  // 燃料 ++', 6).word, '燃料', 'Chinese identifiers are words');
+
+step('symbols: findDefinition');
+const decl = symbols.findDefinition(sampleText, 'smelt');
+assert.ok(decl !== undefined, 'smelt resolves');
+const declLine = sampleText.split('\n')[decl.line];
+assert.ok(declLine.includes('void smelt('), `definition points at the declaration, got "${declLine}"`);
+assert.equal(symbols.findDefinition(sampleText, 'nope'), undefined, 'unknown names resolve to nothing');
+
 console.log('\nsmoke: ok');

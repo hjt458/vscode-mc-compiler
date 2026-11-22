@@ -12,10 +12,10 @@ const vscode = require('vscode');
 
 const {
   compileFiles,
-  ensureCompiler,
   resolveSourceRoot,
   toMarkers,
 } = require('./compiler');
+const { bodyEnd, collectSymbols, findDefinition, positionAt, wordAt } = require('./symbols');
 
 const STATE_TEXT = {
   EXECUTABLE: '可执行',
@@ -160,6 +160,73 @@ async function compile(paths, { silent = false } = {}) {
   }
 }
 
+/** Range covering `name` at a 0-based position. */
+function nameRange(position, name) {
+  return new vscode.Range(
+    position.line,
+    position.character,
+    position.line,
+    position.character + name.length,
+  );
+}
+
+/**
+ * Outline for the Explorer pane and breadcrumbs: the module plus every
+ * function, with the body range so folding and "go to symbol" work.
+ */
+function provideDocumentSymbols(document) {
+  const source = document.getText();
+  return collectSymbols(source).map((symbol) => {
+    const start = positionAt(source, symbol.offset);
+    const lastLine = bodyEnd(source, start.line);
+    const lastText = document.lineAt(lastLine).text.trimEnd();
+    const end = lastText.endsWith('}')
+      ? { line: lastLine, character: lastText.length }
+      : { line: start.line, character: start.character + symbol.name.length };
+    const kind = symbol.kind === 'module' ? vscode.SymbolKind.Module : vscode.SymbolKind.Function;
+    const detail = symbol.kind === 'module' ? '模块' : symbol.kind === 'entry' ? 'RunLoop 入口' : '';
+    return new vscode.DocumentSymbol(
+      symbol.name,
+      detail,
+      kind,
+      new vscode.Range(start.line, start.character, end.line, end.character),
+      nameRange(start, symbol.name),
+    );
+  });
+}
+
+/**
+ * Ctrl+Click / F12: resolve a name to its declaration. Same file first, then
+ * the sibling `.mc` files in the same folder (how a second script would import
+ * a helper from the first).
+ */
+async function provideDefinition(document, position) {
+  if (document.languageId !== 'mc' || document.uri.scheme !== 'file') return undefined;
+  const hit = wordAt(document.lineAt(position.line).text, position.character);
+  if (hit === undefined) return undefined;
+
+  const source = document.getText();
+  const local = findDefinition(source, hit.word);
+  if (local !== undefined) {
+    return new vscode.Location(document.uri, nameRange(local, hit.word));
+  }
+
+  const folder = path.dirname(document.uri.fsPath);
+  const entries = await fsp.readdir(folder).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.endsWith('.mc')) continue;
+    const file = path.join(folder, entry);
+    if (file === document.uri.fsPath) continue;
+    const text = await fsp.readFile(file, 'utf8').catch(() => undefined);
+    if (text === undefined) continue;
+    const found = findDefinition(text, hit.word);
+    if (found !== undefined) {
+      return new vscode.Location(vscode.Uri.file(file), nameRange(found, hit.word));
+    }
+  }
+  return undefined;
+}
+
 /** The preview / normal open path: compile a document once. */
 function compileDocument(document, options) {
   if (document === undefined || document.languageId !== 'mc') return;
@@ -197,6 +264,8 @@ function activate(context) {
       return compile(found.map((uri) => uri.fsPath), { silent: true });
     }),
     vscode.commands.registerCommand('mc.showOutput', () => channel.show(true)),
+    vscode.languages.registerDocumentSymbolProvider('mc', { provideDocumentSymbols }),
+    vscode.languages.registerDefinitionProvider('mc', { provideDefinition }),
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (!config().compileOnSave) return;
       return compileDocument(document);
@@ -217,18 +286,11 @@ function activate(context) {
 
   syncStatus(vscode.window.activeTextEditor?.document);
 
-  // Warm the build cache in the background so the first save is not slow.
+  // A reload re-opens the old editors without firing onDidOpenTextDocument, so
+  // compile whatever is in front right away instead of showing "未编译".
   const first = vscode.window.activeTextEditor?.document;
   if (first !== undefined && first.languageId === 'mc') {
-    const settings = config();
-    resolveSourceRoot({ scriptPath: first.uri.fsPath, configured: settings.sourceRoot });
-    ensureCompiler({
-      sourceRoot: resolveSourceRoot({ scriptPath: first.uri.fsPath, configured: settings.sourceRoot }),
-      storageDir: path.join(storageRoot, 'storage'),
-      javaBin: settings.javaBin,
-      javacBin: settings.javacBin,
-      log,
-    }).catch((error) => log(`预热失败：${String(error?.message ?? error)}`));
+    compileDocument(first, { silent: true });
   }
 }
 
