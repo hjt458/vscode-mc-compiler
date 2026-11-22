@@ -82,10 +82,15 @@
           "default": true,
           "description": "保存 .mc 文件时自动编译并刷新诊断。"
         },
+        "mc.compilerJar": {
+          "type": "string",
+          "default": "",
+          "description": "自定义编译器 jar（内含 McCompileCli）。留空则使用扩展内置的 compiler/mc-compiler.jar。"
+        },
         "mc.sourceRoot": {
           "type": "string",
           "default": "",
-          "description": "包含 dev/programmablefurnace 的 Java 源码根目录（通常是 <模组>/src/main/java）。留空则从当前文件向上自动查找。"
+          "description": "仅在内置 jar 不可用、需要从源码现编时使用：包含 dev/programmablefurnace 的 Java 源码根目录（通常是 <模组>/src/main/java）。留空则从当前文件向上自动查找。"
         },
         "mc.javaBin": {
           "type": "string",

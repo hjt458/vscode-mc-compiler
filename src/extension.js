@@ -12,7 +12,6 @@ const vscode = require('vscode');
 
 const {
   compileFiles,
-  resolveSourceRoot,
   toMarkers,
 } = require('./compiler');
 const { bodyEnd, collectSymbols, findDefinition, positionAt, wordAt } = require('./symbols');
@@ -44,6 +43,7 @@ function config() {
   const settings = vscode.workspace.getConfiguration('mc');
   return {
     compileOnSave: settings.get('compileOnSave', true),
+    compilerJar: settings.get('compilerJar', '') || '',
     sourceRoot: settings.get('sourceRoot', ''),
     javaBin: settings.get('javaBin', 'java') || 'java',
     javacBin: settings.get('javacBin', '') || undefined,
@@ -121,9 +121,12 @@ async function compile(paths, { silent = false } = {}) {
   try {
     const settings = config();
     const storageDir = path.join(storageRoot, 'storage');
-    const sourceRoot = resolveSourceRoot({ scriptPath: paths[0], configured: settings.sourceRoot });
-    log(`编译 ${paths.length} 个文件（源码根 ${sourceRoot}）`);
+    const sourceRoot = settings.sourceRoot.trim();
+    log(
+      `编译 ${paths.length} 个文件（${sourceRoot === '' ? '内置编译器' : `源码根 ${sourceRoot}`}）`,
+    );
     const output = await compileFiles(paths, {
+      compilerJar: settings.compilerJar,
       sourceRoot,
       storageDir,
       javaBin: settings.javaBin,

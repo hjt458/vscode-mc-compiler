@@ -89,4 +89,34 @@ const declLine = sampleText.split('\n')[decl.line];
 assert.ok(declLine.includes('void smelt('), `definition points at the declaration, got "${declLine}"`);
 assert.equal(symbols.findDefinition(sampleText, 'nope'), undefined, 'unknown names resolve to nothing');
 
+// 9. The bundled jar compiles without any mod checkout or source root.
+step('bundled jar: classpath ordering');
+assert.equal(
+  await compiler.resolveClasspath({}),
+  compiler.BUNDLED_JAR,
+  'defaults to the bundled jar',
+);
+assert.equal(
+  await compiler.resolveClasspath({ compilerJar: compiler.BUNDLED_JAR }),
+  path.resolve(compiler.BUNDLED_JAR),
+  'explicit jar wins',
+);
+await assert.rejects(
+  () => compiler.resolveClasspath({ compilerJar: path.join(os.tmpdir(), 'missing.jar') }),
+  /mc\.compilerJar/,
+  'missing explicit jar is reported',
+);
+
+step('bundled jar: compile without mod sources');
+const standalone = path.join(os.tmpdir(), 'smoke_standalone.mc');
+await fs.writeFile(
+  standalone,
+  'MODULE("独立")\nvoid tickOnce() {\n  int 次数 = 0;\n  return;\n}\n',
+  'utf8',
+);
+const [alone] = await compiler.compileFiles([standalone], { log: () => {} });
+assert.equal(alone.state, 'DEPENDENCY', 'a script without RunLoop is a dependency');
+assert.equal(alone.module, '独立', 'module name survives without the mod tree');
+assert.deepEqual(alone.errors, [], 'compiles from the jar alone');
+
 console.log('\nsmoke: ok');

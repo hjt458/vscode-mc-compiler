@@ -2,7 +2,7 @@
 
 给 ProgrammableFurnace 的 `.mc` 脚本用的最小 VS Code 扩展：语法高亮、保存即编译、行内诊断、状态栏显示脚本状态。
 
-不重新实现语言，直接复用模组自己的编译器前端（`compiler/lex`、`compiler/syntax`、`compiler/sem`、`base/CompilerAnalyzer`）——它们只依赖 JDK，所以不开游戏也能编译。
+不重新实现语言，直接复用模组自己的编译器前端（`compiler/lex`、`compiler/syntax`、`compiler/sem`、`base/CompilerAnalyzer`），并把它**预编译成 93 KB 的 jar 放进扩展里**——装好即用，既不需要模组工程，也不需要 JDK。
 
 ## 功能
 
@@ -19,19 +19,40 @@
 
 ## 要求
 
-- JDK：`javac` 与 `java` 在 PATH 上（实测 25.0.1），或在设置里指定绝对路径。
-- 模组源码：扩展需要找到 `src/main/java/dev/programmablefurnace` 下的编译器前端。
-  - 自动发现：`.mc` 文件放在模组工程里时，向上找 12 层即可定位；
-  - 否则在设置里写 `mc.sourceRoot`。
+- **JRE 17+**：`java` 在 PATH 上，或在 `mc.javaBin` 里写绝对路径。jar 用 `--release 17` 编的，17 及以上都能跑。
+- **模组源码不需要了**：编译器已经内置。只有两种情况会回头用源码：内置 jar 被删、或你要从自己的 checkout 重新生成 jar（见下节）。
+
+## 编译器从哪来
+
+```
+compiler/mc-compiler.jar     ← 前端 21 个类 + McCompileCli，预编译（--release 17）
+compiler/PROVENANCE.md       ← 来源项目、commit、javac 版本、21 个文件清单、SHA-256
+```
+
+扩展启动编译时按这个顺序找 classpath（`src/compiler.js` 的 `resolveClasspath`）：
+
+1. `mc.compilerJar` 指定的 jar；
+2. 内置的 `compiler/mc-compiler.jar`；
+3. 都没有时，才用 `mc.sourceRoot`（或从 `.mc` 向上自动发现）的源码现场 `javac` 编译，产物缓存在全局存储里。
+
+升级编译器（模组改了前端之后）：
+
+```bash
+node tools/build-compiler.mjs                       # 默认读 D:/MODS/ProgrammableFurnace
+node tools/build-compiler.mjs --source-root <path>  # 任意 checkout 的 src/main/java
+```
+
+脚本会用 `--release 17` 重编、覆盖 jar，并重写 `PROVENANCE.md`（commit / 版本 / 哈希），所以出处不会和二进制脱节。
 
 ## 设置
 
 | 设置 | 默认 | 说明 |
 | --- | --- | --- |
 | `mc.compileOnSave` | `true` | 保存时编译 |
-| `mc.sourceRoot` | `""` | 模组的 `src/main/java` 绝对路径；留空则自动发现 |
+| `mc.compilerJar` | `""` | 自定义编译器 jar；留空用内置的 |
+| `mc.sourceRoot` | `""` | 仅在内置 jar 不可用时从源码现编：模组 `src/main/java`；留空自动发现 |
 | `mc.javaBin` | `"java"` | `java` 可执行文件 |
-| `mc.javacBin` | `""` | `javac`；留空则取 `javaBin` 同目录，再退回 PATH |
+| `mc.javacBin` | `""` | 仅源码现编时用到；留空取 `javaBin` 同目录，再退回 PATH |
 
 ## 安装（不打包 vsix）
 
@@ -45,10 +66,13 @@ cp -r "D:/Visual Studio Code WorkDir/vscode-mc-compiler" \
 ## 开发
 
 ```bash
-node test/smoke.mjs   # 走一遍：定位工程 → 编译前端（按内容哈希缓存）→ 编译样例 → 诊断坏脚本
+node test/smoke.mjs            # 编译、诊断、符号表、内置 jar 四类用例
+node test/vscode-harness.cjs   # stub 掉 vscode，驱动真实 provider
 ```
 
-前端只编译一次，产物在 `context.globalStorageUri` 下的 `storage/build/<源码哈希>/`；改了编译器源码哈希就变，自动重建。
+`smoke.mjs` 里最后一组用例只给 jar、不给 `sourceRoot`，证明扩展在完全没有模组工程的机器上也能编译。
+
+前端源码只在第 3 种情况（jar 缺失）下才现编，产物在 `context.globalStorageUri` 下的 `storage/build/<源码哈希>/`；改了编译器源码哈希就变，自动重建。
 
 ## 与 DSH 插件的关系
 

@@ -39,6 +39,9 @@ const FRONTEND_FILES = [
 /** The driver living next to this extension. */
 const CLI_SOURCE = path.join(__dirname, '..', 'tools', 'McCompileCli.java');
 
+/** Prebuilt front-end + driver, shipped with the extension. */
+const BUNDLED_JAR = path.join(__dirname, '..', 'compiler', 'mc-compiler.jar');
+
 const JAVAC_TIMEOUT_MS = 180_000;
 const JAVA_TIMEOUT_MS = 60_000;
 
@@ -191,17 +194,41 @@ function parseOutput(stdout) {
   return parsed;
 }
 
+/**
+ * Pick the classpath for the compiler driver:
+ *
+ *   1. an explicit jar (`mc.compilerJar`) when the user points at their own build,
+ *   2. the jar bundled with the extension (no JDK, no mod checkout needed),
+ *   3. the front-end compiled on the fly from `sourceRoot` (dev / fallback).
+ */
+async function resolveClasspath(options) {
+  const explicit = typeof options.compilerJar === 'string' ? options.compilerJar.trim() : '';
+  if (explicit !== '') {
+    const jar = path.resolve(explicit);
+    if (!fs.existsSync(jar)) throw new Error(`mc.compilerJar 指向的文件不存在：${jar}`);
+    return jar;
+  }
+  if (fs.existsSync(BUNDLED_JAR)) return BUNDLED_JAR;
+  if (typeof options.sourceRoot === 'string' && options.sourceRoot.trim() !== '') {
+    return ensureCompiler(options);
+  }
+  throw new Error(
+    `找不到内置编译器（${BUNDLED_JAR}），也没有可用的源码根目录；` +
+      '请设置 mc.sourceRoot 指向模组的 src/main/java，或设置 mc.compilerJar。',
+  );
+}
+
 /** Compile `.mc` files; returns one result per input, in argument order. */
 async function compileFiles(files, options) {
   if (files.length === 0) return [];
-  const classes = await ensureCompiler(options);
+  const classpath = await resolveClasspath(options);
   const { stdout } = await run(
     options.javaBin || 'java',
     [
       '-Dfile.encoding=UTF-8',
       '-Dstdout.encoding=UTF-8',
       '-cp',
-      classes,
+      classpath,
       'McCompileCli',
       ...files,
     ],
@@ -222,6 +249,7 @@ function toMarkers(result) {
 }
 
 module.exports = {
+  BUNDLED_JAR,
   CLI_SOURCE,
   FRONTEND_DIRS,
   FRONTEND_FILES,
@@ -231,6 +259,7 @@ module.exports = {
   findModRoot,
   javacFor,
   parseOutput,
+  resolveClasspath,
   resolveSourceRoot,
   sourceHash,
   toMarkers,
