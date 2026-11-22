@@ -164,4 +164,28 @@ assert.deepEqual(
   'a directory without git degrades instead of throwing',
 );
 
+// 11. The terminal command: same answers as the editor, as exit codes.
+step("cli: exit codes");
+const { spawnSync } = await import("node:child_process");
+const { fileURLToPath } = await import("node:url");
+const CLI = fileURLToPath(new URL("../bin/mc-compile.cjs", import.meta.url));
+const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
+
+const okRun = cli(SAMPLE);
+assert.equal(okRun.status, 0, `sample exits 0, got ${okRun.status}: ${okRun.stderr}`);
+assert.match(okRun.stdout, /可执行/, "human readable state");
+assert.match(okRun.stdout, /furnace_smelting\.mc/, "file name printed");
+
+const badRun = cli(path.join(os.tmpdir(), "smoke_broken.mc"));
+assert.equal(badRun.status, 1, "a FAILED file exits 1");
+assert.match(badRun.stdout, /编译失败/, "failure is reported");
+
+assert.equal(cli(path.join(os.tmpdir(), "definitely-missing.mc")).status, 2, "missing file exits 2");
+assert.equal(cli().status, 2, "no arguments exits 2");
+
+const jsonRun = cli("--json", SAMPLE);
+assert.equal(jsonRun.status, 0, "json run exits 0");
+const parsed = JSON.parse(jsonRun.stdout);
+assert.equal(parsed[0].state, "EXECUTABLE", "json payload parses");
+
 console.log('\nsmoke: ok');

@@ -82,6 +82,39 @@ cp -r "D:/Visual Studio Code WorkDir/vscode-mc-compiler" \
 
 然后在 VS Code 里 `Ctrl+Shift+P` → `Developer: Reload Window`。目录名必须是 `<publisher>.<name>-<version>` 的形式，VS Code 才会把它当扩展加载。
 
+## 终端命令 mc-compile
+
+不想开编辑器也能编译，同一条流水线（同一个内置 jar）：
+
+```bash
+mc-compile furnace_smelting.mc                       # 一个文件
+mc-compile --all src/main/resources/.../scripts      # 目录下所有 .mc（递归）
+mc-compile --json *.mc > report.json                 # 原始 JSON，给脚本用
+mc-compile --source-root <mod>/src/main/java a.mc    # 用源码现编而不是内置 jar
+```
+
+输出与退出码：
+
+```
+可执行  furnace_smelting.mc  (冶炼)
+```
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 全部通过（`EXECUTABLE` / `READONLY` / `DEPENDENCY` / `BLANK`） |
+| `1` | 至少一个文件 `FAILED`，诊断逐行打印 |
+| `2` | 参数错、文件不存在、找不到编译器 |
+
+所以可以直接进 `&&` 链或 CI：`mc-compile --all scripts || exit 1`。
+
+命令装在哪：`package.json` 里声明了 `bin.mc-compile`，`npm link` 或用下面三个转发脚本（已在 PATH 的 `%APPDATA%\npm`）：
+
+- `mc-compile.cmd`（cmd / PowerShell）
+- `mc-compile.ps1`（PowerShell 显式调用）
+- `mc-compile`（Git Bash / MSYS）
+
+三个文件都只是转发到 `bin/mc-compile.cjs`。仓库搬家后把它们里的路径改一下，或者删掉重新 `npm link`。
+
 ## 开发
 
 ```bash
