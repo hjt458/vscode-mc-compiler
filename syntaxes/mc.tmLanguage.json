@@ -1,0 +1,153 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MC",
+  "scopeName": "source.mc",
+  "fileTypes": ["mc"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#module-declaration" },
+    { "include": "#tags" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#function-declaration" },
+    { "include": "#function-call" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.mc",
+          "begin": "//",
+          "end": "\\n",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.mc" } }
+        },
+        {
+          "name": "comment.block.mc",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.mc" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.mc" } }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mc",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.mc" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.mc" } },
+      "patterns": [
+        { "name": "constant.character.escape.mc", "match": "\\\\." },
+        { "name": "invalid.illegal.unterminated-string.mc", "match": "\\\\$" }
+      ]
+    },
+    "module-declaration": {
+      "patterns": [
+        { "name": "keyword.other.module.mc", "match": "\\bMODULE\\b(?=\\s*\\()" },
+        {
+          "comment": "MODULE(\"name\") — the module name is what the game shows",
+          "match": "\\b(MODULE)\\s*\\(\\s*(\"[^\"]*\")",
+          "captures": {
+            "1": { "name": "keyword.other.module.mc" },
+            "2": { "name": "entity.name.namespace.mc" }
+          }
+        },
+        { "name": "keyword.other.import.mc", "match": "\\b(import|from|using|namespace)\\b" }
+      ]
+    },
+    "tags": {
+      "comment": "tag::fuels / slot::input style namespaced ids",
+      "match": "\\b([A-Za-z_][\\w]*)\\s*::\\s*([A-Za-z_][\\w]*)",
+      "captures": {
+        "1": { "name": "entity.name.tag.namespace.mc" },
+        "2": { "name": "entity.name.tag.mc" }
+      }
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.mc",
+          "match": "(?<![\\w.])\\d+\\.\\d+(?![\\w.])"
+        },
+        {
+          "name": "constant.numeric.integer.mc",
+          "match": "(?<![\\w.])\\d+(?![\\w.])"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mc",
+          "match": "\\b(if|else|switch|case|default|for|while|do|return|break|continue)\\b"
+        },
+        {
+          "name": "entity.name.function.entry.mc",
+          "match": "\\bRunLoop\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.mc",
+      "match": "\\b(int|float|double|bool|char|void|string|vector|map|pair|tuple|auto|ItemStream|Container|ItemType|Item|Slot)\\b"
+    },
+    "constants": {
+      "name": "constant.language.mc",
+      "match": "\\b(true|false)\\b"
+    },
+    "function-declaration": {
+      "comment": "Type name( — a definition rather than a call",
+      "match": "\\b(?:int|float|double|bool|char|void|string|vector|map|pair|tuple|auto|ItemStream|Container|ItemType|Item|Slot)\\s+([A-Za-z_][\\w]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.mc" }
+      }
+    },
+    "function-call": {
+      "patterns": [
+        {
+          "name": "support.function.member.mc",
+          "match": "\\.\\s*([A-Za-z_][\\w]*)\\s*(?=\\()",
+          "captures": { "1": { "name": "support.function.member.mc" } }
+        },
+        {
+          "name": "support.function.builtin.mc",
+          "match": "\\b(Item|fsm|slot|tag|furnace)\\s*(?=\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.mc",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.mc",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.mc",
+          "match": "=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.mc",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "invalid.illegal.compound-assignment.mc",
+          "match": "\\+=|-=|\\*=|/=|%=|\\+\\+|--"
+        }
+      ]
+    },
+    "identifiers": {
+      "comment": "Identifiers may be Chinese; only tag plain (non-punctuation) ones",
+      "name": "variable.other.mc",
+      "match": "[A-Za-z_\\u4e00-\\u9fa5][\\w\\u4e00-\\u9fa5]*"
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "name": "mc-compiler",
+  "displayName": "MC Compiler (ProgrammableFurnace)",
+  "description": "语法高亮、保存即编译，并把 .mc 脚本的编译诊断标到编辑器里。复用可编程熔炉自带的编译器前端。",
+  "version": "0.1.0",
+  "publisher": "hjt458",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "mc",
+    "programmablefurnace",
+    "minecraft",
+    "script"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onLanguage:mc"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mc",
+        "aliases": [
+          "MC",
+          "mc"
+        ],
+        "extensions": [
+          ".mc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mc",
+        "scopeName": "source.mc",
+        "path": "./syntaxes/mc.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mc.compileFile",
+        "title": "MC: 编译当前文件",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "mc.compileAll",
+        "title": "MC: 编译工作区所有 .mc",
+        "icon": "$(beaker-done)"
+      },
+      {
+        "command": "mc.showOutput",
+        "title": "MC: 显示编译日志"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mc.compileFile",
+          "when": "resourceLangId == mc",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mc.compileFile",
+          "when": "resourceLangId == mc"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MC Compiler",
+      "properties": {
+        "mc.compileOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "保存 .mc 文件时自动编译并刷新诊断。"
+        },
+        "mc.sourceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "包含 dev/programmablefurnace 的 Java 源码根目录（通常是 <模组>/src/main/java）。留空则从当前文件向上自动查找。"
+        },
+        "mc.javaBin": {
+          "type": "string",
+          "default": "java",
+          "description": "java 可执行文件路径（默认从 PATH 查找）。"
+        },
+        "mc.javacBin": {
+          "type": "string",
+          "default": "",
+          "description": "javac 可执行文件路径。留空则与 java 同目录，或从 PATH 查找。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  }
+}
