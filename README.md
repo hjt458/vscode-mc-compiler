@@ -147,3 +147,9 @@ node test/local.mjs            # 需要 D:/MODS/ProgrammableFurnace：路径发�
 - 只暴露编译器前端能给出的信息：`ContentState` + 编译期诊断；不做「`RunLoop` 是否可能死循环」这类运行时语义检查。
 - 跳转与大纲是**词法级**的（`src/symbols.js`：按声明行找 `类型 名(`），不做类型推导；重名的不同作用域函数会跳到第一个声明。
 - 编译在扩展宿主进程里串行执行，保存很快时后来的保存会被跳过（日志里会说「上一次编译还没结束」）。
+
+## 许可
+
+[MIT](LICENSE) © 2026 hjt458
+
+内嵌的 `compiler/mc-compiler.jar` 由 `tools/build-compiler.mjs` 从 ProgrammableFurnace 的编译器前端构建；来源、版本与哈希见 [`compiler/PROVENANCE.md`](compiler/PROVENANCE.md)。
