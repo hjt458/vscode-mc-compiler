@@ -1,5 +1,7 @@
 # MC Compiler for VS Code
 
+[![CI](https://github.com/hjt458/vscode-mc-compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/hjt458/vscode-mc-compiler/actions/workflows/ci.yml)
+
 给 ProgrammableFurnace 的 `.mc` 脚本用的最小 VS Code 扩展：语法高亮、保存即编译、行内诊断、状态栏显示脚本状态。
 
 不重新实现语言，直接复用模组自己的编译器前端（`compiler/lex`、`compiler/syntax`、`compiler/sem`、`base/CompilerAnalyzer`），并把它**预编译成 93 KB 的 jar 放进扩展里**——装好即用，既不需要模组工程，也不需要 JDK。
