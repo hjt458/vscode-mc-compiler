@@ -116,7 +116,9 @@
     }
   },
   "scripts": {
-    "test": "node test/smoke.mjs"
+    "test": "node test/smoke.mjs && node test/vscode-harness.cjs && node test/local.mjs",
+    "test:ci": "node test/smoke.mjs && node test/vscode-harness.cjs",
+    "build:compiler": "node tools/build-compiler.mjs"
   },
   "bin": {
     "mc-compile": "bin/mc-compile.cjs"

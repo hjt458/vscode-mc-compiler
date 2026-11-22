@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }}, JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20]
+        java: [17]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      # No npm dependencies: the extension and its tests run on Node built-ins.
+      - name: Syntax check
+        run: |
+          node --check src/compiler.js
+          node --check src/symbols.js
+          node --check src/extension.js
+          node --check bin/mc-compile.cjs
+          node --check test/vscode-harness.cjs
+
+      - name: Hermetic tests (bundled jar only)
+        run: npm run test:ci
+
+      # Proves the jar really targets the JRE we claim: --release 17 needs no JDK.
+      - name: Bundled jar runs on a plain JRE
+        run: node -e "const c=require('./src/compiler.js');c.compileFiles(['test/fixtures/smelter.mc'],{log:()=>{}}).then(([r])=>{if(r.state!=='EXECUTABLE'){console.error(r);process.exit(1)}console.log('jar ok:',r.module)})"
+
+      - name: Local checkout tests are skipped on CI
+        run: node test/local.mjs

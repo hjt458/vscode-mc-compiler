@@ -118,9 +118,14 @@ mc-compile --source-root <mod>/src/main/java a.mc    # 用源码现编而不是�
 ## 开发
 
 ```bash
-node test/smoke.mjs            # 编译、诊断、符号表、内置 jar 四类用例
+npm test              # 全部：自包含测试 + 扩展 harness + 本机模组工程检查
+npm run test:ci       # CI 用：只用 Node + JRE + 内置 jar
+node test/smoke.mjs            # 编译、诊断、符号表、内置 jar、CLI 退出码
 node test/vscode-harness.cjs   # stub 掉 vscode，驱动真实 provider
+node test/local.mjs            # 需要 D:/MODS/ProgrammableFurnace：路径发现、javac 现编、真实脚本、漂移判词
 ```
+
+`smoke.mjs` 与 `vscode-harness.cjs` 只依赖仓库里的 `test/fixtures/*.mc` 和 `compiler/mc-compiler.jar`，**不需要模组工程、不需要 JDK、不需要 git**，所以 GitHub Actions 的干净机器能直接跑（`.github/workflows/ci.yml`）。`local.mjs` 找不到模组工程时会打印 `local: skipped` 并以 0 退出，CI 上也照跑，用来证明跳过路径没问题。
 
 `smoke.mjs` 里最后一组用例只给 jar、不给 `sourceRoot`，证明扩展在完全没有模组工程的机器上也能编译。
 

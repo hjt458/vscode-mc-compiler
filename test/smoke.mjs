@@ -1,74 +1,71 @@
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import fsp from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Hermetic test suite: everything here runs with only Node and a JRE.
+ * No mod checkout, no `javac`, no git — so CI can run it on a clean machine.
+ * The mod-dependent checks live in `test/local.mjs`.
+ */
 
 const require = createRequire(import.meta.url);
 const compiler = require('../src/compiler.js');
+const symbols = require('../src/symbols.js');
 
-const SAMPLE = 'D:/MODS/ProgrammableFurnace/src/main/resources/programmablefurnace/scripts/furnace_smelting.mc';
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURES = path.join(HERE, 'fixtures');
+const SMELTER = path.join(FIXTURES, 'smelter.mc');
+const LIBRARY = path.join(FIXTURES, 'library.mc');
+const BROKEN = path.join(FIXTURES, 'broken.mc');
+const CLI = path.join(HERE, '..', 'bin', 'mc-compile.cjs');
 const storageDir = path.join(os.tmpdir(), 'mc-compiler-smoke');
 
 function step(name) {
   process.stdout.write(`- ${name}\n`);
 }
 
-// 1. Locate the mod checkout from the script path.
-step('findModRoot');
-const modRoot = compiler.findModRoot(path.dirname(SAMPLE));
-assert.equal(modRoot, path.resolve('D:/MODS/ProgrammableFurnace'), 'mod root');
+// 1. One JVM run covers the three content states.
+step('compileFiles: fixtures');
+const results = await compiler.compileFiles([SMELTER, LIBRARY, BROKEN], { log: () => {} });
+const [smelter, library, broken] = results;
+assert.equal(smelter.state, 'EXECUTABLE', 'a script with RunLoop is executable');
+assert.equal(smelter.module, '冶炼', 'module name is decoded');
+assert.deepEqual(smelter.errors, [], 'clean script has no errors');
+assert.equal(library.state, 'DEPENDENCY', 'no RunLoop means a dependency library');
+assert.equal(library.module, '工具库', 'library module name');
+assert.equal(broken.state, 'FAILED', 'syntax errors fail the file');
+assert.ok(broken.errors.some((e) => e.code === 'S05'), 'S05 reported for a missing expression');
 
-// 2. Resolve the Java source root.
-step('resolveSourceRoot');
-const sourceRoot = compiler.resolveSourceRoot({ scriptPath: SAMPLE, configured: '' });
-assert.equal(sourceRoot, path.join(modRoot, 'src', 'main', 'java'), 'source root');
-
-// 3. Build the front-end once (cached by content hash).
-step('ensureCompiler');
-const classes = await compiler.ensureCompiler({ sourceRoot, storageDir, log: () => {} });
-assert.ok(classes.includes(path.join('build')), 'classes dir under build cache');
-
-// 4. Compile the sample: it is a runnable smelting script.
-step('compileFiles: sample');
-const [sample] = await compiler.compileFiles([SAMPLE], { sourceRoot, storageDir, log: () => {} });
-assert.equal(sample.state, 'EXECUTABLE', 'sample state');
-assert.equal(sample.module, '冶炼', 'sample module');
-assert.deepEqual(sample.errors, [], 'sample has no errors');
-
-// 5. A broken script reports diagnostics with 1-based positions.
-step('compileFiles: broken');
-const broken = path.join(os.tmpdir(), 'smoke_broken.mc');
-await (await import('node:fs/promises')).writeFile(
-  broken,
-  'MODULE("坏")\nRunLoop() {\n  int a = 1;\n  return;\n}\nMODULE("重复")\n',
-  'utf8',
-);
-const [bad] = await compiler.compileFiles([broken], { sourceRoot, storageDir, log: () => {} });
-assert.equal(bad.state, 'FAILED', 'broken state');
-assert.ok(bad.errors.length > 0, 'broken has diagnostics');
-const markers = compiler.toMarkers(bad);
+// 2. Diagnostics carry 1-based positions for the editor.
+step('toMarkers');
+const markers = compiler.toMarkers(broken);
+assert.ok(markers.length >= 2, 'more than one diagnostic');
 assert.ok(markers.every((m) => m.line >= 1 && m.column >= 1), 'positions are 1-based');
+assert.ok(markers.every((m) => /^[A-Z]\d\d$/.test(m.code)), 'codes look like S05/M02');
 
-// 6. parseOutput tolerates JVM chatter before the JSON payload.
+// 3. JVM chatter before the JSON payload is skipped.
 step('parseOutput');
-const noisy = compiler.parseOutput('Picked up JAVA_TOOL_OPTIONS: -Dfoo=1\n[{"file":"x.mc","state":"BLANK","errors":[]}]');
+const noisy = compiler.parseOutput(
+  'Picked up JAVA_TOOL_OPTIONS: -Dfoo=1\n[{"file":"x.mc","state":"BLANK","errors":[]}]',
+);
 assert.equal(noisy[0].state, 'BLANK', 'noise skipped');
 
-// 7. Empty input does not start a JVM.
+// 4. No files means no JVM at all.
 step('compileFiles: empty');
-assert.deepEqual(await compiler.compileFiles([], { sourceRoot, storageDir }), [], 'empty input');
+assert.deepEqual(await compiler.compileFiles([], { storageDir }), [], 'empty input');
 
-// 8. Lexical symbols: module + functions, with positions that survive masking.
+// 5. Lexical symbols: order, kinds, positions that survive masking.
 step('symbols: collect');
-const symbols = require('../src/symbols.js');
-const fs = await import('node:fs/promises');
-const sampleText = await fs.readFile(SAMPLE, 'utf8');
-const found = symbols.collectSymbols(sampleText);
-const names = found.map((s) => s.name);
+const smelterText = await fsp.readFile(SMELTER, 'utf8');
+const found = symbols.collectSymbols(smelterText);
 assert.deepEqual(
-  names,
-  ['冶炼', 'refillFuel', 'refillInput', 'sortInput', 'hasInput', 'smelt', 'returnItem', 'RunLoop'],
-  `symbols in document order, got ${names.join(', ')}`,
+  found.map((s) => s.name),
+  ['冶炼', 'refillFuel', 'countItems', 'RunLoop'],
+  `symbols in document order, got ${found.map((s) => s.name).join(', ')}`,
 );
 assert.equal(found[0].kind, 'module', 'first symbol is the module');
 assert.equal(found.at(-1).kind, 'entry', 'RunLoop is the entry point');
@@ -83,19 +80,17 @@ assert.deepEqual(symbols.wordAt('  refillFuel();', 4), { word: 'refillFuel', sta
 assert.equal(symbols.wordAt('  // 燃料 ++', 6).word, '燃料', 'Chinese identifiers are words');
 
 step('symbols: findDefinition');
-const decl = symbols.findDefinition(sampleText, 'smelt');
-assert.ok(decl !== undefined, 'smelt resolves');
-const declLine = sampleText.split('\n')[decl.line];
-assert.ok(declLine.includes('void smelt('), `definition points at the declaration, got "${declLine}"`);
-assert.equal(symbols.findDefinition(sampleText, 'nope'), undefined, 'unknown names resolve to nothing');
-
-// 9. The bundled jar compiles without any mod checkout or source root.
-step('bundled jar: classpath ordering');
-assert.equal(
-  await compiler.resolveClasspath({}),
-  compiler.BUNDLED_JAR,
-  'defaults to the bundled jar',
+const decl = symbols.findDefinition(smelterText, 'countItems');
+assert.ok(decl !== undefined, 'countItems resolves');
+assert.ok(
+  smelterText.split('\n')[decl.line].includes('int countItems('),
+  'definition points at the declaration',
 );
+assert.equal(symbols.findDefinition(smelterText, 'nope'), undefined, 'unknown names resolve to nothing');
+
+// 6. Classpath resolution prefers an explicit jar, then the bundled one.
+step('classpath ordering');
+assert.equal(await compiler.resolveClasspath({}), compiler.BUNDLED_JAR, 'defaults to the bundled jar');
 assert.equal(
   await compiler.resolveClasspath({ compilerJar: compiler.BUNDLED_JAR }),
   path.resolve(compiler.BUNDLED_JAR),
@@ -107,19 +102,15 @@ await assert.rejects(
   'missing explicit jar is reported',
 );
 
-step('bundled jar: compile without mod sources');
+// 7. A script outside any mod checkout still compiles from the jar alone.
+step('bundled jar: no mod checkout');
 const standalone = path.join(os.tmpdir(), 'smoke_standalone.mc');
-await fs.writeFile(
-  standalone,
-  'MODULE("独立")\nvoid tickOnce() {\n  int 次数 = 0;\n  return;\n}\n',
-  'utf8',
-);
+await fsp.writeFile(standalone, 'MODULE("独立")\nvoid tickOnce() {\n  int 次数 = 0;\n}\n', 'utf8');
 const [alone] = await compiler.compileFiles([standalone], { log: () => {} });
 assert.equal(alone.state, 'DEPENDENCY', 'a script without RunLoop is a dependency');
 assert.equal(alone.module, '独立', 'module name survives without the mod tree');
-assert.deepEqual(alone.errors, [], 'compiles from the jar alone');
 
-// 10. Provenance: the jar records what it was built from, and the verdict is pure.
+// 8. Provenance is readable and the verdict is pure (git is covered in local.mjs).
 step('provenance: read');
 const provenance = compiler.readProvenance();
 assert.ok(provenance !== undefined, 'bundled provenance is readable');
@@ -150,42 +141,31 @@ assert.deepEqual(
   'missing provenance stays unknown',
 );
 
-step('provenance: live checkout');
-const live = await compiler.checkCompilerDrift({ modRoot });
-assert.ok(['match', 'stale', 'diverged', 'unknown'].includes(live.status), `verdict ${live.status}`);
-assert.equal(live.head.length >= 7, true, 'head hash read from git');
-if (provenance.commit === live.head) assert.equal(live.status, 'match', 'jar matches this checkout');
+// 9. The terminal command answers the same questions as exit codes.
+step('cli: exit codes');
+const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
 
-step('provenance: no git');
-const noGit = await compiler.checkCompilerDrift({ modRoot: os.tmpdir() });
-assert.deepEqual(
-  { status: noGit.status, reason: noGit.reason },
-  { status: 'unknown', reason: 'no-git' },
-  'a directory without git degrades instead of throwing',
-);
+const okRun = cli(SMELTER);
+assert.equal(okRun.status, 0, `clean file exits 0, got ${okRun.status}: ${okRun.stderr}`);
+assert.match(okRun.stdout, /可执行/, 'human readable state');
+assert.match(okRun.stdout, /smelter\.mc/, 'file name printed');
 
-// 11. The terminal command: same answers as the editor, as exit codes.
-step("cli: exit codes");
-const { spawnSync } = await import("node:child_process");
-const { fileURLToPath } = await import("node:url");
-const CLI = fileURLToPath(new URL("../bin/mc-compile.cjs", import.meta.url));
-const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
+const badRun = cli(BROKEN);
+assert.equal(badRun.status, 1, 'a FAILED file exits 1');
+assert.match(badRun.stdout, /编译失败/, 'failure is reported');
+assert.match(badRun.stdout, /S05/, 'diagnostic code printed');
 
-const okRun = cli(SAMPLE);
-assert.equal(okRun.status, 0, `sample exits 0, got ${okRun.status}: ${okRun.stderr}`);
-assert.match(okRun.stdout, /可执行/, "human readable state");
-assert.match(okRun.stdout, /furnace_smelting\.mc/, "file name printed");
+assert.equal(cli(path.join(os.tmpdir(), 'definitely-missing.mc')).status, 2, 'missing file exits 2');
+assert.equal(cli().status, 2, 'no arguments exits 2');
 
-const badRun = cli(path.join(os.tmpdir(), "smoke_broken.mc"));
-assert.equal(badRun.status, 1, "a FAILED file exits 1");
-assert.match(badRun.stdout, /编译失败/, "failure is reported");
-
-assert.equal(cli(path.join(os.tmpdir(), "definitely-missing.mc")).status, 2, "missing file exits 2");
-assert.equal(cli().status, 2, "no arguments exits 2");
-
-const jsonRun = cli("--json", SAMPLE);
-assert.equal(jsonRun.status, 0, "json run exits 0");
+const jsonRun = cli('--json', '--all', FIXTURES);
+assert.equal(jsonRun.status, 1, '--all with a broken fixture exits 1');
 const parsed = JSON.parse(jsonRun.stdout);
-assert.equal(parsed[0].state, "EXECUTABLE", "json payload parses");
+assert.equal(parsed.length, 3, 'json payload lists every fixture');
+assert.deepEqual(
+  parsed.map((r) => r.state).sort(),
+  ['DEPENDENCY', 'EXECUTABLE', 'FAILED'],
+  'json states match the fixtures',
+);
 
 console.log('\nsmoke: ok');

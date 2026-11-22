@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
 
-const SAMPLE = 'D:/MODS/ProgrammableFurnace/src/main/resources/programmablefurnace/scripts/furnace_smelting.mc';
+const SAMPLE = path.join(__dirname, 'fixtures', 'smelter.mc');
 
 /* ---------- vscode stub ---------- */
 
@@ -137,13 +137,13 @@ process.stdout.write('- DocumentSymbolProvider: module + functions\n');
 const symbols = registered.symbolProviders[0].provideDocumentSymbols(document);
 assert.deepEqual(
   symbols.map((s) => s.name),
-  ['冶炼', 'refillFuel', 'refillInput', 'sortInput', 'hasInput', 'smelt', 'returnItem', 'RunLoop'],
+  ['冶炼', 'refillFuel', 'countItems', 'RunLoop'],
   'outline names',
 );
 assert.equal(symbols[0].kind, vscode.SymbolKind.Module, 'module kind');
 assert.equal(symbols.at(-1).detail, 'RunLoop 入口', 'entry detail');
-const smelt = symbols.find((s) => s.name === 'smelt');
-assert.equal(lines[smelt.selectionRange.startLine].trim().startsWith('void smelt('), true, 'smelt selection');
+const countItems = symbols.find((s) => s.name === 'countItems');
+assert.equal(lines[countItems.selectionRange.startLine].trim().startsWith('int countItems('), true, 'countItems selection');
 
 /* 3. definition of a call site inside RunLoop */
 process.stdout.write('- DefinitionProvider: call -> declaration\n');
@@ -160,7 +160,7 @@ provider
 
     /* 4. unknown names and non-.mc documents resolve to nothing */
     process.stdout.write('- DefinitionProvider: unknown name -> undefined\n');
-    return provider.provideDefinition(document, new Position(callLine, 4));
+    return provider.provideDefinition(document, new Position(callLine, 0));
   })
   .then(async (unknown) => {
     assert.equal(unknown, undefined, 'unknown identifier');
