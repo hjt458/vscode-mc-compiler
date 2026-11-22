@@ -26,7 +26,8 @@
 
 ```
 compiler/mc-compiler.jar     ← 前端 21 个类 + McCompileCli，预编译（--release 17）
-compiler/PROVENANCE.md       ← 来源项目、commit、javac 版本、21 个文件清单、SHA-256
+compiler/PROVENANCE.md       ← 来源项目、commit、javac 版本、22 个文件清单、SHA-256
+compiler/provenance.json     ← 同一份出处的机器可读版（扩展用它做版本一致性检查）
 ```
 
 扩展启动编译时按这个顺序找 classpath（`src/compiler.js` 的 `resolveClasspath`）：
@@ -44,6 +45,23 @@ node tools/build-compiler.mjs --source-root <path>  # 任意 checkout 的 src/ma
 
 脚本会用 `--release 17` 重编、覆盖 jar，并重写 `PROVENANCE.md`（commit / 版本 / 哈希），所以出处不会和二进制脱节。
 
+## 编译器出处与版本一致性
+
+内置 jar 不是「一份不知道哪来的二进制」：`compiler/provenance.json` 记着它的来源 commit、构建时间、javac 版本与 SHA-256，`tools/build-compiler.mjs` 每次重建都会一起刷新。
+
+工作时扩展会比对这个 commit 与脚本所在工程（向上找到的 git 检出）的 `HEAD`：
+
+| 判定 | 含义 | 表现 |
+| --- | --- | --- |
+| `match` | jar 就是 HEAD 构建的 | 状态栏不变 |
+| `stale` | jar 的 commit 是 HEAD 的祖先，即 jar 旧了 | 状态栏加「· 编译器旧于 HEAD」+ 一次警告 |
+| `diverged` | 两边不同源（换分支 / rebase / 用了别人的 jar） | 状态栏加「· 编译器与 HEAD 分叉」+ 一次警告 |
+| `unknown` | 没有 git、没有 provenance、或 git 拒绝回答 | 静默，不打扰 |
+
+警告里的「查看出处」会打开 `PROVENANCE.md`；`MC: 查看编译器出处` 命令随时可以打开它。检查结果同时写进 MC Compiler 输出面板，结果是按工程根缓存的（30 秒），不会每次保存都跑 git。
+
+不想被提醒就把 `mc.checkCompilerVersion` 关掉——但那样编辑器诊断与游戏内行为可能出现「编辑器说没事、进游戏却报错」的错位。
+
 ## 设置
 
 | 设置 | 默认 | 说明 |
@@ -51,6 +69,7 @@ node tools/build-compiler.mjs --source-root <path>  # 任意 checkout 的 src/ma
 | `mc.compileOnSave` | `true` | 保存时编译 |
 | `mc.compilerJar` | `""` | 自定义编译器 jar；留空用内置的 |
 | `mc.sourceRoot` | `""` | 仅在内置 jar 不可用时从源码现编：模组 `src/main/java`；留空自动发现 |
+| `mc.checkCompilerVersion` | `true` | 比较内置编译器的构建提交与工程 HEAD，不一致时提示 |
 | `mc.javaBin` | `"java"` | `java` 可执行文件 |
 | `mc.javacBin` | `""` | 仅源码现编时用到；留空取 `javaBin` 同目录，再退回 PATH |
 

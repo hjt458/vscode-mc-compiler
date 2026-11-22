@@ -57,6 +57,11 @@
       {
         "command": "mc.showOutput",
         "title": "MC: 显示编译日志"
+      },
+      {
+        "command": "mc.showProvenance",
+        "title": "MC: 查看编译器出处",
+        "icon": "$(file-code)"
       }
     ],
     "menus": {
@@ -101,6 +106,11 @@
           "type": "string",
           "default": "",
           "description": "javac 可执行文件路径。留空则与 java 同目录，或从 PATH 查找。"
+        },
+        "mc.checkCompilerVersion": {
+          "type": "boolean",
+          "default": true,
+          "description": "比较内置编译器的构建提交与工程 HEAD，不一致时在状态栏提示（需要工程是 git 仓库）。"
         }
       }
     }

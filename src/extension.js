@@ -11,7 +11,10 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 const {
+  PROVENANCE_MD,
+  checkCompilerDrift,
   compileFiles,
+  findModRoot,
   toMarkers,
 } = require('./compiler');
 const { bodyEnd, collectSymbols, findDefinition, positionAt, wordAt } = require('./symbols');
@@ -39,10 +42,22 @@ let channel;
 /** True while a compile is running, so saves do not pile up. */
 let running = false;
 
+/** Suffix such as "· 编译器旧于 HEAD", empty while the jar matches the checkout. */
+let driftNote = '';
+
+/** Mod root -> { at, value }, so a save does not spawn git on every keystroke. */
+const driftCache = new Map();
+
+/** `${jarCommit}|${head}|${status}` keys already shown as a warning. */
+const driftWarned = new Set();
+
+const DRIFT_TTL_MS = 30_000;
+
 function config() {
   const settings = vscode.workspace.getConfiguration('mc');
   return {
     compileOnSave: settings.get('compileOnSave', true),
+    checkCompilerVersion: settings.get('checkCompilerVersion', true),
     compilerJar: settings.get('compilerJar', '') || '',
     sourceRoot: settings.get('sourceRoot', ''),
     javaBin: settings.get('javaBin', 'java') || 'java',
@@ -62,7 +77,7 @@ function syncStatus(document) {
   }
   const result = results.get(document.uri.fsPath);
   if (result === undefined) {
-    statusItem.text = '$(beaker) MC: 未编译';
+    statusItem.text = driftNote === '' ? '$(beaker) MC: 未编译' : `$(beaker) MC: 未编译 ${driftNote}`;
     statusItem.tooltip = '保存文件或运行 “MC: 编译当前文件”';
     statusItem.command = 'mc.compileFile';
     statusItem.show();
@@ -73,8 +88,10 @@ function syncStatus(document) {
   const parts = [`$(beaker) MC: ${label}`];
   if (errors > 0) parts.push(`${errors} 个错误`);
   if (result.module) parts.push(result.module);
+  if (driftNote !== '') parts.push(driftNote);
   statusItem.text = parts.join(' ');
-  statusItem.tooltip = errors === 0 ? '编译通过' : result.errors.map((e) => `${e.code} ${e.message}`).join('\n');
+  statusItem.tooltip =
+    errors === 0 ? '编译通过' : result.errors.map((e) => `${e.code} ${e.message}`).join('\n');
   statusItem.command = 'mc.showOutput';
   statusItem.show();
 }
@@ -147,6 +164,7 @@ async function compile(paths, { silent = false } = {}) {
 
     const active = vscode.window.activeTextEditor?.document;
     syncStatus(active);
+    void refreshDrift(active);
   } catch (error) {
     const message = String(error?.message ?? error);
     log(`编译失败：${message}`);
@@ -161,6 +179,64 @@ async function compile(paths, { silent = false } = {}) {
   } finally {
     running = false;
   }
+}
+
+/** Open the human-readable provenance of the bundled jar. */
+async function showProvenance() {
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(PROVENANCE_MD));
+  await vscode.window.showTextDocument(document, { preview: true });
+}
+
+/**
+ * Compare the bundled jar's build commit with the checkout holding `document`
+ * and remember the verdict for the status bar. A mismatch is worth one warning
+ * per (jar commit, HEAD) pair: the editor would otherwise disagree with the game.
+ */
+async function refreshDrift(document) {
+  driftNote = '';
+  if (!config().checkCompilerVersion || document === undefined || document.languageId !== 'mc') {
+    syncStatus(document);
+    return;
+  }
+  const modRoot = findModRoot(path.dirname(document.uri.fsPath));
+  if (modRoot === undefined) {
+    syncStatus(document);
+    return;
+  }
+  const cached = driftCache.get(modRoot);
+  let verdict;
+  if (cached !== undefined && Date.now() - cached.at < DRIFT_TTL_MS) {
+    verdict = cached.value;
+  } else {
+    verdict = await checkCompilerDrift({ modRoot });
+    driftCache.set(modRoot, { at: Date.now(), value: verdict });
+  }
+
+  if (verdict.status === 'stale' || verdict.status === 'diverged') {
+    driftNote = verdict.status === 'stale' ? '· 编译器旧于 HEAD' : '· 编译器与 HEAD 分叉';
+  }
+  log(
+    `编译器出处：${verdict.status}` +
+      (verdict.provenance === undefined
+        ? ''
+        : `（jar ${verdict.provenance.commit} / HEAD ${verdict.head ?? '?'}）`),
+  );
+  // Paint the status bar before the dialog: the warning waits for the user, and
+  // the suffix should not wait with it.
+  syncStatus(document);
+
+  if (driftNote === '') return;
+  const key = `${verdict.provenance.commit}|${verdict.head}|${verdict.status}`;
+  if (driftWarned.has(key)) return;
+  driftWarned.add(key);
+  const what = verdict.status === 'stale' ? '落后于' : '与当前分支分叉，不同源';
+  const text =
+    `内置编译器基于 ${verdict.provenance.commit}，${what}工程 HEAD ${verdict.head}。` +
+    '游戏内行为可能与编辑器诊断不一致，可运行 node tools/build-compiler.mjs 重建。';
+  void vscode.window.showWarningMessage(text, '查看出处', '知道了').then((choice) => {
+    if (choice === '查看出处') return showProvenance();
+    return undefined;
+  });
 }
 
 /** Range covering `name` at a 0-based position. */
@@ -267,6 +343,7 @@ function activate(context) {
       return compile(found.map((uri) => uri.fsPath), { silent: true });
     }),
     vscode.commands.registerCommand('mc.showOutput', () => channel.show(true)),
+    vscode.commands.registerCommand('mc.showProvenance', () => showProvenance()),
     vscode.languages.registerDocumentSymbolProvider('mc', { provideDocumentSymbols }),
     vscode.languages.registerDefinitionProvider('mc', { provideDefinition }),
     vscode.workspace.onDidSaveTextDocument((document) => {
@@ -276,7 +353,10 @@ function activate(context) {
     vscode.workspace.onDidOpenTextDocument((document) => {
       return compileDocument(document, { silent: true });
     }),
-    vscode.window.onDidChangeActiveTextEditor(() => syncStatus(vscode.window.activeTextEditor?.document)),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      syncStatus(editor?.document);
+      void refreshDrift(editor?.document);
+    }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       diagnostics.delete(document.uri);
       results.delete(document.uri.fsPath);

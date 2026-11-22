@@ -42,8 +42,15 @@ const CLI_SOURCE = path.join(__dirname, '..', 'tools', 'McCompileCli.java');
 /** Prebuilt front-end + driver, shipped with the extension. */
 const BUNDLED_JAR = path.join(__dirname, '..', 'compiler', 'mc-compiler.jar');
 
+/** What the bundled jar was built from; written by `tools/build-compiler.mjs`. */
+const PROVENANCE_JSON = path.join(__dirname, '..', 'compiler', 'provenance.json');
+
+/** Human-readable version of the same facts, for the "show provenance" command. */
+const PROVENANCE_MD = path.join(__dirname, '..', 'compiler', 'PROVENANCE.md');
+
 const JAVAC_TIMEOUT_MS = 180_000;
 const JAVA_TIMEOUT_MS = 60_000;
+const GIT_TIMEOUT_MS = 10_000;
 
 function run(file, args, timeout) {
   return new Promise((resolve, reject) => {
@@ -237,6 +244,112 @@ async function compileFiles(files, options) {
   return parseOutput(stdout);
 }
 
+/** Like `run`, but reports the exit code instead of rejecting on non-zero. */
+function runStatus(file, args, timeout) {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      args,
+      { timeout, windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve({ code: 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
+          return;
+        }
+        const code = typeof error.code === 'number' ? error.code : 127;
+        resolve({ code, stdout: String(stdout || ''), stderr: String(stderr || '') });
+      },
+    );
+  });
+}
+
+/** The provenance record of the bundled jar, or undefined when unreadable. */
+function readProvenance(file = PROVENANCE_JSON) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (typeof data?.commit !== 'string' || data.commit.trim() === '') return undefined;
+    return data;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `{ head, subject }` of the checkout at `modRoot`, or undefined without git. */
+async function gitHead(modRoot) {
+  try {
+    const head = (await run('git', ['-C', modRoot, 'rev-parse', '--short', 'HEAD'], GIT_TIMEOUT_MS)).stdout.trim();
+    if (head === '') return undefined;
+    let subject = '';
+    try {
+      subject = (await run('git', ['-C', modRoot, 'log', '-1', '--format=%s'], GIT_TIMEOUT_MS)).stdout.trim();
+    } catch {
+      subject = '';
+    }
+    return { head, subject };
+  } catch {
+    return undefined;
+  }
+}
+
+/** True/false when `commit` is reachable from HEAD, undefined when git cannot say. */
+async function isAncestor(modRoot, commit) {
+  const { code } = await runStatus(
+    'git',
+    ['-C', modRoot, 'merge-base', '--is-ancestor', commit, 'HEAD'],
+    GIT_TIMEOUT_MS,
+  );
+  if (code === 0) return true;
+  if (code === 1) return false;
+  return undefined;
+}
+
+/** Two abbreviated hashes name the same commit when one is a prefix of the other. */
+function sameCommit(a, b) {
+  const left = String(a || '').toLowerCase();
+  const right = String(b || '').toLowerCase();
+  if (left === '' || right === '') return false;
+  return left.startsWith(right) || right.startsWith(left);
+}
+
+/**
+ * Pure verdict for the drift question.
+ *
+ *   match     the jar was built from exactly the checked-out commit
+ *   stale     the jar predates HEAD (HEAD descends from the jar's commit)
+ *   diverged  neither is an ancestor of the other (branch switch, rebase, stash)
+ *   unknown   not enough information (no provenance, no git, git refused)
+ */
+function compareProvenance({ provenance, head, ancestor } = {}) {
+  if (provenance === undefined || !provenance?.commit) {
+    return { status: 'unknown', reason: 'no-provenance' };
+  }
+  if (typeof head !== 'string' || head.trim() === '') {
+    return { status: 'unknown', reason: 'no-git' };
+  }
+  if (sameCommit(provenance.commit, head)) return { status: 'match' };
+  if (ancestor === true) return { status: 'stale' };
+  if (ancestor === false) return { status: 'diverged' };
+  return { status: 'unknown', reason: 'no-ancestry' };
+}
+
+/**
+ * Compare the bundled jar's provenance with the mod checkout holding `modRoot`.
+ * Never throws: a missing checkout or git only degrades the verdict to unknown.
+ */
+async function checkCompilerDrift({ modRoot, provenance = readProvenance() } = {}) {
+  if (provenance === undefined) return { status: 'unknown', reason: 'no-provenance' };
+  if (typeof modRoot !== 'string' || modRoot === '') {
+    return { status: 'unknown', reason: 'no-mod-root', provenance };
+  }
+  const info = await gitHead(modRoot);
+  if (info === undefined) return { status: 'unknown', reason: 'no-git', provenance };
+  const ancestor = sameCommit(provenance.commit, info.head)
+    ? undefined
+    : await isAncestor(modRoot, provenance.commit);
+  const verdict = compareProvenance({ provenance, head: info.head, ancestor });
+  return { ...verdict, provenance, head: info.head, subject: info.subject };
+}
+
 /** Flatten one result's errors into marker-friendly records (1-based lines/cols). */
 function toMarkers(result) {
   const errors = Array.isArray(result?.errors) ? result.errors : [];
@@ -253,14 +366,22 @@ module.exports = {
   CLI_SOURCE,
   FRONTEND_DIRS,
   FRONTEND_FILES,
+  PROVENANCE_JSON,
+  PROVENANCE_MD,
+  checkCompilerDrift,
   collectFrontendSources,
+  compareProvenance,
   compileFiles,
   ensureCompiler,
   findModRoot,
+  gitHead,
+  isAncestor,
   javacFor,
   parseOutput,
+  readProvenance,
   resolveClasspath,
   resolveSourceRoot,
+  sameCommit,
   sourceHash,
   toMarkers,
 };

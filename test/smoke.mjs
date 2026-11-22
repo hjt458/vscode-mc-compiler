@@ -119,4 +119,49 @@ assert.equal(alone.state, 'DEPENDENCY', 'a script without RunLoop is a dependenc
 assert.equal(alone.module, '独立', 'module name survives without the mod tree');
 assert.deepEqual(alone.errors, [], 'compiles from the jar alone');
 
+// 10. Provenance: the jar records what it was built from, and the verdict is pure.
+step('provenance: read');
+const provenance = compiler.readProvenance();
+assert.ok(provenance !== undefined, 'bundled provenance is readable');
+assert.match(provenance.commit, /^[0-9a-f]{7,40}$/i, 'commit is a hash');
+assert.equal(provenance.sha256.length, 64, 'sha256 recorded');
+assert.ok(provenance.size > 0, 'size recorded');
+
+step('provenance: compare');
+assert.deepEqual(compiler.compareProvenance({ provenance, head: provenance.commit }), { status: 'match' });
+assert.deepEqual(
+  compiler.compareProvenance({ provenance, head: 'abcdef1', ancestor: true }),
+  { status: 'stale' },
+  'jar commit is an ancestor of HEAD',
+);
+assert.deepEqual(
+  compiler.compareProvenance({ provenance, head: 'abcdef1', ancestor: false }),
+  { status: 'diverged' },
+  'jar commit is not reachable from HEAD',
+);
+assert.deepEqual(
+  compiler.compareProvenance({ provenance, head: 'abcdef1' }),
+  { status: 'unknown', reason: 'no-ancestry' },
+  'no ancestry answer stays unknown',
+);
+assert.deepEqual(
+  compiler.compareProvenance({ provenance: undefined, head: 'abcdef1' }),
+  { status: 'unknown', reason: 'no-provenance' },
+  'missing provenance stays unknown',
+);
+
+step('provenance: live checkout');
+const live = await compiler.checkCompilerDrift({ modRoot });
+assert.ok(['match', 'stale', 'diverged', 'unknown'].includes(live.status), `verdict ${live.status}`);
+assert.equal(live.head.length >= 7, true, 'head hash read from git');
+if (provenance.commit === live.head) assert.equal(live.status, 'match', 'jar matches this checkout');
+
+step('provenance: no git');
+const noGit = await compiler.checkCompilerDrift({ modRoot: os.tmpdir() });
+assert.deepEqual(
+  { status: noGit.status, reason: noGit.reason },
+  { status: 'unknown', reason: 'no-git' },
+  'a directory without git degrades instead of throwing',
+);
+
 console.log('\nsmoke: ok');

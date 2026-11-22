@@ -23,6 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXT_ROOT = path.join(__dirname, '..');
 const JAR_PATH = path.join(EXT_ROOT, 'compiler', 'mc-compiler.jar');
 const PROVENANCE_PATH = path.join(EXT_ROOT, 'compiler', 'PROVENANCE.md');
+/** Same facts as PROVENANCE.md, but machine-readable (the extension reads this). */
+const PROVENANCE_JSON_PATH = path.join(EXT_ROOT, 'compiler', 'provenance.json');
 const CLI_SOURCE = path.join(EXT_ROOT, 'tools', 'McCompileCli.java');
 
 /** Where each compiled package lives, relative to the Java source root. */
@@ -164,7 +166,22 @@ file (commit, versions, hash) so the provenance never drifts from the binary.
 `;
 
   await fsp.writeFile(PROVENANCE_PATH, provenance, 'utf8');
+
+  const provenanceJson = {
+    source: modRoot ?? sourceRoot,
+    commit,
+    commitSubject: subject,
+    builtAt: new Date().toISOString(),
+    javac: javacVersion,
+    release: Number(RELEASE),
+    jar: 'compiler/mc-compiler.jar',
+    size: bytes.length,
+    sha256: hash,
+  };
+  await fsp.writeFile(PROVENANCE_JSON_PATH, `${JSON.stringify(provenanceJson, null, 2)}\n`, 'utf8');
+
   process.stdout.write(`provenance: ${path.relative(EXT_ROOT, PROVENANCE_PATH)}\n`);
+  process.stdout.write(`provenance: ${path.relative(EXT_ROOT, PROVENANCE_JSON_PATH)}\n`);
 }
 
 main().catch((error) => {

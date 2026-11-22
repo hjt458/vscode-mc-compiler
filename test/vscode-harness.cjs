@@ -129,6 +129,7 @@ assert.equal(registered.symbolProviders.length, 1, 'one symbol provider');
 assert.equal(registered.definitionProviders.length, 1, 'one definition provider');
 assert.ok(registered.commands.has('mc.compileFile'), 'compileFile command');
 assert.ok(registered.commands.has('mc.compileAll'), 'compileAll command');
+assert.ok(registered.commands.has('mc.showProvenance'), 'showProvenance command');
 assert.ok(context.subscriptions.length >= 8, 'subscriptions pushed for disposal');
 
 /* 2. outline */
