@@ -59,6 +59,11 @@
         "title": "MC: 显示编译日志"
       },
       {
+        "command": "mc.selectCompiler",
+        "title": "MC: 选择编译器…",
+        "category": "MC"
+      },
+      {
         "command": "mc.showProvenance",
         "title": "MC: 查看编译器出处",
         "icon": "$(file-code)"
@@ -91,6 +96,11 @@
           "type": "string",
           "default": "",
           "description": "自定义编译器 jar（内含 McCompileCli）。留空则使用扩展内置的 compiler/mc-compiler.jar。"
+        },
+        "mc.compilerDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "扫描此目录下的 `*.jar` 作为可选编译器（默认 `compiler/jars`）。用 “MC: 选择编译器…” 切换。"
         },
         "mc.sourceRoot": {
           "type": "string",

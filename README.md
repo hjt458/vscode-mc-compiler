@@ -38,6 +38,17 @@ compiler/provenance.json     ← 同一份出处的机器可读版（扩展用�
 2. 内置的 `compiler/mc-compiler.jar`；
 3. 都没有时，才用 `mc.sourceRoot`（或从 `.mc` 向上自动发现）的源码现场 `javac` 编译，产物缓存在全局存储里。
 
+### 换用别的编译器版本
+
+jar 现在会自报家门：打包时写进 `META-INF/MANIFEST.MF`，运行时由 `src/jarmeta.js` 纯 Node 读出来（zip 中央目录 + `inflateRawSync`，不需要解压工具）。所以一个 jar 随便拷到哪里都能报出版本。
+
+1. 把想用的 `*.jar` 丢进 `compiler/jars/`（或任何目录，用 `mc.compilerDir` 指过去）；
+2. 命令面板运行 **MC: 选择编译器…**；
+3. 列表里每项显示 `commit · 日期 · 大小`，内置 jar 永远排第一；
+4. 选中后扩展先用它跑一次「零文件编译」，能跑才写入 `mc.compilerJar`（选内置则写空串）。
+
+状态栏会跟随显示 `· 97444ed` 之类的后缀，让你随时知道现在用的是哪一份。版本一致性检查（下一节）也只针对当前选中的 jar，而不是写死内置那份。
+
 升级编译器（模组改了前端之后）：
 
 ```bash

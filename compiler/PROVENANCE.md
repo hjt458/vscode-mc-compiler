@@ -10,8 +10,8 @@ driver, compiled ahead of time so the extension does **not** need the mod checko
 | Commit | `97444ed` — fix: 空白文件按无组件规范形存储（修复编译产物无法与合成空白堆叠） |
 | Built with | `javac 25.0.1` / `jar 25.0.1`, `--release 17` (class file 61 → runs on JRE 17+) |
 | Jar | `compiler/mc-compiler.jar` |
-| SHA-256 | `8fdaae9d5fb03a0ce354f607961a49a174c8634b9ddc98624e936c53636461e2` |
-| Size | 95638 bytes |
+| SHA-256 | `77676309d25e1144fce399547432deb18f115f7833341923ad483019795b80af` |
+| Size | 95731 bytes |
 
 ## Sources compiled into the jar (22 files)
 

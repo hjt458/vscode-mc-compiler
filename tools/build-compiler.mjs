@@ -97,6 +97,33 @@ async function main() {
 
   const sources = await collectSources(sourceRoot);
   const outDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mc-compiler-jar-'));
+  const metaDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mc-compiler-meta-'));
+
+  // Everything that identifies this build is known before packaging, so it can
+  // be stamped into the jar itself: a jar copied to another machine can still
+  // say which mod commit it came from.
+  const modRoot = modRootOf(sourceRoot);
+  const commit =
+    modRoot === undefined ? 'unknown' : firstLine('git', ['rev-parse', '--short', 'HEAD'], modRoot);
+  const subject = modRoot === undefined ? '' : firstLine('git', ['log', '-1', '--format=%s'], modRoot);
+  const javacVersion = firstLine('javac', ['-version']);
+  const jarVersion = firstLine('jar', ['--version']);
+  const builtAt = new Date().toISOString();
+
+  const manifestPath = path.join(metaDir, 'MANIFEST.MF');
+  await fsp.writeFile(
+    manifestPath,
+    [
+      'Manifest-Version: 1.0',
+      'Compiler-Creator: build-compiler.mjs',
+      `Compiler-Commit: ${commit}`,
+      `Compiler-Built-At: ${builtAt}`,
+      `Compiler-Release: ${RELEASE}`,
+      `Compiler-Sources: ${sources.length}`,
+      '',
+    ].join('\r\n'),
+    'utf8',
+  );
 
   process.stdout.write(`javac --release ${RELEASE}: ${sources.length} sources → ${outDir}\n`);
   execFileSync(
@@ -104,20 +131,17 @@ async function main() {
     ['--release', RELEASE, '-encoding', 'UTF-8', '-nowarn', '-d', outDir, '-sourcepath', sourceRoot, ...sources],
     { stdio: 'inherit' },
   );
-  execFileSync('jar', ['--create', '--file', JAR_PATH, '-C', outDir, '.'], { stdio: 'inherit' });
+  execFileSync('jar', ['--create', '--file', JAR_PATH, '--manifest', manifestPath, '-C', outDir, '.'], {
+    stdio: 'inherit',
+  });
   await fsp.rm(outDir, { recursive: true, force: true });
+  await fsp.rm(metaDir, { recursive: true, force: true });
 
   const bytes = await fsp.readFile(JAR_PATH);
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
   process.stdout.write(`jar: ${path.relative(EXT_ROOT, JAR_PATH)} (${bytes.length} bytes)\n${hash}\n`);
 
   if (arg('no-provenance', false) === true) return;
-
-  const modRoot = modRootOf(sourceRoot);
-  const commit = modRoot === undefined ? 'unknown' : firstLine('git', ['rev-parse', '--short', 'HEAD'], modRoot);
-  const subject = modRoot === undefined ? '' : firstLine('git', ['log', '-1', '--format=%s'], modRoot);
-  const javacVersion = firstLine('javac', ['-version']);
-  const jarVersion = firstLine('jar', ['--version']);
 
   const listing = (prefix) =>
     sources
@@ -171,7 +195,7 @@ file (commit, versions, hash) so the provenance never drifts from the binary.
     source: modRoot ?? sourceRoot,
     commit,
     commitSubject: subject,
-    builtAt: new Date().toISOString(),
+    builtAt,
     javac: javacVersion,
     release: Number(RELEASE),
     jar: 'compiler/mc-compiler.jar',

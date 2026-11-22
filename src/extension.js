@@ -11,13 +11,17 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 const {
+  BUNDLED_JAR,
   PROVENANCE_MD,
   checkCompilerDrift,
   compileFiles,
   findModRoot,
+  listCompilerJars,
+  probeJar,
   toMarkers,
 } = require('./compiler');
 const { bodyEnd, collectSymbols, findDefinition, positionAt, wordAt } = require('./symbols');
+const { jarMeta } = require('./jarmeta.js');
 
 const STATE_TEXT = {
   EXECUTABLE: '可执行',
@@ -45,6 +49,9 @@ let running = false;
 /** Suffix such as "· 编译器旧于 HEAD", empty while the jar matches the checkout. */
 let driftNote = '';
 
+/** Suffix naming a non-bundled compiler, e.g. "· 97444ed". */
+let compilerNote = '';
+
 /** Mod root -> { at, value }, so a save does not spawn git on every keystroke. */
 const driftCache = new Map();
 
@@ -59,6 +66,7 @@ function config() {
     compileOnSave: settings.get('compileOnSave', true),
     checkCompilerVersion: settings.get('checkCompilerVersion', true),
     compilerJar: settings.get('compilerJar', '') || '',
+    compilerDir: settings.get('compilerDir', '') || '',
     sourceRoot: settings.get('sourceRoot', ''),
     javaBin: settings.get('javaBin', 'java') || 'java',
     javacBin: settings.get('javacBin', '') || undefined,
@@ -69,6 +77,20 @@ function log(message) {
   channel.appendLine(typeof message === 'string' ? message : String(message));
 }
 
+/**
+ * Name the active compiler in the status bar, but only when it is not the
+ * bundled one — the default should stay quiet.
+ */
+function refreshCompilerNote() {
+  const jar = config().compilerJar;
+  if (jar === '') {
+    compilerNote = '';
+    return;
+  }
+  const meta = jarMeta(jar);
+  compilerNote = `· ${meta.known ? meta.commit : meta.name}`;
+}
+
 /** Point the status bar at `document`, or clear it when it is not an .mc file. */
 function syncStatus(document) {
   if (document === undefined || document.languageId !== 'mc') {
@@ -77,7 +99,8 @@ function syncStatus(document) {
   }
   const result = results.get(document.uri.fsPath);
   if (result === undefined) {
-    statusItem.text = driftNote === '' ? '$(beaker) MC: 未编译' : `$(beaker) MC: 未编译 ${driftNote}`;
+    const suffix = [compilerNote, driftNote].filter((part) => part !== '').join(' ');
+    statusItem.text = suffix === '' ? '$(beaker) MC: 未编译' : `$(beaker) MC: 未编译 ${suffix}`;
     statusItem.tooltip = '保存文件或运行 “MC: 编译当前文件”';
     statusItem.command = 'mc.compileFile';
     statusItem.show();
@@ -88,6 +111,7 @@ function syncStatus(document) {
   const parts = [`$(beaker) MC: ${label}`];
   if (errors > 0) parts.push(`${errors} 个错误`);
   if (result.module) parts.push(result.module);
+  if (compilerNote !== '') parts.push(compilerNote);
   if (driftNote !== '') parts.push(driftNote);
   statusItem.text = parts.join(' ');
   statusItem.tooltip =
@@ -179,6 +203,65 @@ async function compile(paths, { silent = false } = {}) {
   } finally {
     running = false;
   }
+}
+
+/** Human-readable identity of a jar: commit, build date, size. */
+function describeJar(meta) {
+  const bits = [];
+  bits.push(meta.known ? meta.commit : '来源未知');
+  if (meta.builtAt) bits.push(meta.builtAt.slice(0, 10));
+  bits.push(`${Math.round(meta.bytes / 1024)} KB`);
+  return bits.join(' · ');
+}
+
+/** Choose which compiler jar to use, remembering the choice in settings. */
+async function selectCompiler() {
+  const settings = vscode.workspace.getConfiguration('mc');
+  const current = settings.get('compilerJar', '') || '';
+  const listed = await listCompilerJars({ compilerDir: settings.get('compilerDir', '') || '' });
+
+  const items = listed.jars.map((jar) => ({
+    label: jar.role === 'bundled' ? `${jar.name}（内置）` : jar.name,
+    description: describeJar(jar),
+    detail: jar.role === 'dir' ? jar.path : '随扩展一起发布',
+    jarPath: jar.role === 'bundled' ? '' : jar.path,
+    picked: (jar.role === 'bundled' ? '' : jar.path) === current,
+  }));
+  if (listed.dir && items.every((item) => !item.picked) && current !== '') {
+    items.unshift({
+      label: path.basename(current),
+      description: '当前设置（不在扫描目录里）',
+      detail: current,
+      jarPath: current,
+      picked: true,
+    });
+  }
+
+  const picked = await vscode.window.showQuickPick(items, {
+    title: '选择 .mc 编译器',
+    placeHolder: current === '' ? '当前：内置 jar' : `当前：${current}`,
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  if (picked === undefined) return;
+
+  const target = picked.jarPath === '' ? BUNDLED_JAR : picked.jarPath;
+  const probe = probeJar(target, { javaBin: config().javaBin });
+  if (!probe.ok) {
+    void vscode.window.showErrorMessage(`这个 jar 用不了：${probe.reason}`);
+    return;
+  }
+  await settings.update('compilerJar', picked.jarPath, vscode.ConfigurationTarget.Global);
+  log(`编译器切换到：${picked.jarPath === '' ? '内置 jar' : picked.jarPath}`);
+  const document = vscode.window.activeTextEditor?.document;
+  driftCache.clear();
+  await refreshDrift(document);
+  if (document !== undefined && document.languageId === 'mc') {
+    await compileDocument(document, { silent: true });
+  }
+  void vscode.window.showInformationMessage(
+    `编译器已切换为 ${picked.label}（${picked.description}）`,
+  );
 }
 
 /** Open the human-readable provenance of the bundled jar. */
@@ -344,6 +427,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand('mc.showOutput', () => channel.show(true)),
     vscode.commands.registerCommand('mc.showProvenance', () => showProvenance()),
+    vscode.commands.registerCommand('mc.selectCompiler', () => selectCompiler()),
     vscode.languages.registerDocumentSymbolProvider('mc', { provideDocumentSymbols }),
     vscode.languages.registerDefinitionProvider('mc', { provideDefinition }),
     vscode.workspace.onDidSaveTextDocument((document) => {
@@ -367,6 +451,7 @@ function activate(context) {
     }),
   );
 
+  refreshCompilerNote();
   syncStatus(vscode.window.activeTextEditor?.document);
 
   // A reload re-opens the old editors without firing onDidOpenTextDocument, so

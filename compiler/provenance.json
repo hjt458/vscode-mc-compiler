@@ -1,11 +1,11 @@
 {
-  "source": "D:/MODS/ProgrammableFurnace",
+  "source": "D:\\MODS\\ProgrammableFurnace",
   "commit": "97444ed",
   "commitSubject": "fix: 空白文件按无组件规范形存储（修复编译产物无法与合成空白堆叠）",
-  "builtAt": "2026-11-22T07:50:37.242Z",
+  "builtAt": "2026-11-22T08:32:03.825Z",
   "javac": "javac 25.0.1",
   "release": 17,
   "jar": "compiler/mc-compiler.jar",
-  "size": 95638,
-  "sha256": "8fdaae9d5fb03a0ce354f607961a49a174c8634b9ddc98624e936c53636461e2"
+  "size": 95731,
+  "sha256": "77676309d25e1144fce399547432deb18f115f7833341923ad483019795b80af"
 }

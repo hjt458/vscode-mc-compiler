@@ -10,11 +10,16 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const Module = require('node:module');
+const os = require('node:os');
+const fsp = require('node:fs/promises');
 const path = require('node:path');
 
 const SAMPLE = path.join(__dirname, 'fixtures', 'smelter.mc');
 
 /* ---------- vscode stub ---------- */
+
+/** Mutable knobs the tests flip to drive config, quick pick and messages. */
+const shell = { settings: {}, updates: [], picker: undefined, errors: [], infos: [] };
 
 class Range {
   constructor(startLine, startCharacter, endLine, endCharacter) {
@@ -57,6 +62,7 @@ const vscode = {
   DiagnosticSeverity: { Error: 0, Warning: 1 },
   SymbolKind: { Function: 11, Module: 1 },
   StatusBarAlignment: { Left: 1 },
+  ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
   Uri: { file: (p) => ({ fsPath: p, scheme: 'file', toString: () => `file://${p}` }) },
   ThemeColor: class ThemeColor {},
   languages: {
@@ -81,13 +87,20 @@ const vscode = {
   window: {
     createOutputChannel: () => ({ appendLine: () => {}, show: () => {}, dispose: () => {} }),
     createStatusBarItem: () => ({ show: () => {}, hide: () => {}, dispose: () => {} }),
-    showErrorMessage: async () => undefined,
-    showInformationMessage: async () => undefined,
+    showErrorMessage: async (message) => { shell.errors.push(message); return undefined; },
+    showInformationMessage: async (message) => { shell.infos.push(message); return undefined; },
+    showQuickPick: async (items) => (typeof shell.picker === "function" ? shell.picker(items) : undefined),
     onDidChangeActiveTextEditor: () => ({ dispose: () => {} }),
     activeTextEditor: undefined,
   },
   workspace: {
-    getConfiguration: () => ({ get: (_key, fallback) => fallback }),
+    getConfiguration: () => ({
+      get: (key, fallback) => (key in shell.settings ? shell.settings[key] : fallback),
+      update: async (key, value, target) => {
+        shell.settings[key] = value;
+        shell.updates.push([key, value, target]);
+      },
+    }),
     findFiles: async () => [],
     onDidSaveTextDocument: () => ({ dispose: () => {} }),
     onDidOpenTextDocument: () => ({ dispose: () => {} }),
@@ -167,6 +180,36 @@ provider
     const markdown = { ...document, languageId: 'markdown' };
     process.stdout.write('- DefinitionProvider: ignores other languages\n');
     assert.equal(await provider.provideDefinition(markdown, new Position(0, 0)), undefined);
+
+    /* 5. Choosing a compiler writes the setting, after probing the jar */
+    process.stdout.write('- selectCompiler: picks a jar and remembers it\n');
+    const selectCompiler = registered.commands.get('mc.selectCompiler');
+    assert.equal(typeof selectCompiler, 'function', 'command is registered');
+
+    const compilerModule = require('../src/compiler.js');
+    const altDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mc-compiler-alt-'));
+    const altJar = path.join(altDir, 'alt.jar');
+    await fsp.copyFile(compilerModule.BUNDLED_JAR, altJar);
+    shell.settings.compilerDir = altDir;
+    shell.picker = (items) => items.find((item) => item.label === 'alt.jar');
+    await selectCompiler();
+    assert.deepEqual(
+      shell.updates.at(-1),
+      ['compilerJar', altJar, vscode.ConfigurationTarget.Global],
+      'the chosen jar is stored globally',
+    );
+    assert.match(shell.infos.at(-1), /alt\.jar/, 'the choice is confirmed');
+
+    /* 6. A jar that cannot run is refused, and the old choice survives */
+    process.stdout.write('- selectCompiler: refuses a jar that cannot run\n');
+    const junkJar = path.join(altDir, 'junk.jar');
+    await fsp.writeFile(junkJar, 'not a zip at all');
+    shell.picker = (items) => items.find((item) => item.label === 'junk.jar');
+    shell.updates.length = 0;
+    await selectCompiler();
+    assert.equal(shell.updates.length, 0, 'a broken jar does not change the setting');
+    assert.match(shell.errors.at(-1), /用不了/, 'the refusal is explained');
+
     console.log('\nharness: ok');
   })
   .catch((error) => {

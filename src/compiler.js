@@ -13,11 +13,13 @@
  *   3. runs `McCompileCli` and parses its JSON.
  */
 
-const { execFile } = require('node:child_process');
+const { execFile, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+
+const { jarMeta } = require('./jarmeta.js');
 
 /** Package root of the mod inside `src/main/java`. */
 const PACKAGE_PARTS = ['dev', 'programmablefurnace'];
@@ -225,6 +227,63 @@ async function resolveClasspath(options) {
   );
 }
 
+/** The directory `mc.compilerDir` may add extra jars from. */
+const DEFAULT_JAR_DIR = path.join(__dirname, '..', 'compiler', 'jars');
+
+/**
+ * Every jar the user could switch to: the bundled one first, then whatever sits
+ * in `compilerDir` (or the bundled `compiler/jars/` when unset). Entries carry
+ * the identity read out of the jar's own manifest.
+ */
+async function listCompilerJars(options = {}) {
+  const configured = typeof options.compilerDir === 'string' ? options.compilerDir.trim() : '';
+  const dir = configured === '' ? DEFAULT_JAR_DIR : path.resolve(configured);
+  const out = [];
+
+  if (fs.existsSync(BUNDLED_JAR)) {
+    out.push({ id: 'bundled', role: 'bundled', ...jarMeta(BUNDLED_JAR) });
+  }
+  let names = [];
+  try {
+    names = await fsp.readdir(dir);
+  } catch {
+    names = [];
+  }
+  for (const name of names.filter((entry) => entry.toLowerCase().endsWith('.jar')).sort()) {
+    const full = path.join(dir, name);
+    const meta = jarMeta(full);
+    if (meta.error !== undefined) continue;
+    out.push({ id: full, role: 'dir', dir, ...meta });
+  }
+  return { dir, jars: out };
+}
+
+/**
+ * Compile nothing with this jar: if the class is missing or the jar is not a
+ * jar, the switch is rejected before it is written to settings.
+ */
+function probeJar(jarPath, options = {}) {
+  const javaBin = typeof options.javaBin === 'string' && options.javaBin.trim() !== '' ? options.javaBin : 'java';
+  const result = spawnSync(javaBin, ['-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-cp', jarPath, 'McCompileCli'], {
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  if (result.error !== undefined && result.error !== null) {
+    return { ok: false, reason: `无法启动 java：${result.error.message}` };
+  }
+  if (result.status !== 0) {
+    const noise = `${result.stderr ?? ''}${result.stdout ?? ''}`.trim().split('\n')[0] ?? '';
+    return { ok: false, reason: noise === '' ? `退出码 ${result.status}` : noise };
+  }
+  try {
+    const parsed = parseOutput(result.stdout ?? '');
+    if (!Array.isArray(parsed)) return { ok: false, reason: '输出不是 JSON 数组' };
+  } catch {
+    return { ok: false, reason: '输出不是有效的 JSON' };
+  }
+  return { ok: true };
+}
+
 /** Compile `.mc` files; returns one result per input, in argument order. */
 async function compileFiles(files, options) {
   if (files.length === 0) return [];
@@ -374,10 +433,12 @@ module.exports = {
   compileFiles,
   ensureCompiler,
   findModRoot,
+  listCompilerJars,
   gitHead,
   isAncestor,
   javacFor,
   parseOutput,
+  probeJar,
   readProvenance,
   resolveClasspath,
   resolveSourceRoot,

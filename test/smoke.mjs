@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
@@ -167,5 +168,38 @@ assert.deepEqual(
   ['DEPENDENCY', 'EXECUTABLE', 'FAILED'],
   'json states match the fixtures',
 );
+
+// 10. A jar describes itself, and the bundled copy still matches provenance.
+step('jarmeta: the jar names its own build');
+const bundled = compiler.BUNDLED_JAR;
+const jarMeta = require('../src/jarmeta.js').jarMeta;
+const meta = jarMeta(bundled);
+assert.equal(meta.known, true, 'bundled jar carries a manifest');
+assert.equal(meta.commit, provenance.commit, 'manifest commit equals provenance commit');
+assert.equal(meta.release, String(provenance.release), 'manifest release equals provenance release');
+assert.equal(Number(meta.sources), provenance.sources ?? Number(meta.sources), 'source count agrees');
+
+const digest = crypto
+  .createHash('sha256')
+  .update(await fsp.readFile(bundled))
+  .digest('hex');
+assert.equal(digest, provenance.sha256, 'jar bytes match the recorded sha256');
+
+// 11. Compiler candidates: bundled first, then anything in the scan directory.
+step('compilers: bundled first, then the scan dir');
+const listed = await compiler.listCompilerJars({});
+assert.equal(listed.jars[0].role, 'bundled', 'the bundled jar is offered first');
+assert.equal(listed.jars[0].path, bundled, 'bundled entry points at the shipped jar');
+assert.ok(
+  listed.dir.endsWith(path.join('compiler', 'jars')),
+  `default scan dir is compiler/jars, got ${listed.dir}`,
+);
+assert.equal(compiler.probeJar(bundled).ok, true, 'the bundled jar answers a zero-file compile');
+
+const junk = path.join(os.tmpdir(), 'mc-compiler-not-a-jar.jar');
+await fsp.writeFile(junk, 'not a zip');
+const badJar = compiler.probeJar(junk);
+assert.equal(badJar.ok, false, 'a file that is not a jar is rejected');
+assert.ok(typeof badJar.reason === 'string' && badJar.reason.length > 0, 'rejection explains why');
 
 console.log('\nsmoke: ok');
